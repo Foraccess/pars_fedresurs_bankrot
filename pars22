@@ -1,0 +1,118 @@
+import csv
+import time
+from selenium import webdriver
+from selenium.webdriver.firefox.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import Select, WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+# Настройка headless-режима
+options = Options()
+options.headless = True
+
+BASE_URL = "http://old.bankrot.fedresurs.ru/TradeList.aspx"
+OUTPUT_FILE = "lot_data.csv"
+
+# Отладка: вывод элементов
+def debug_element_state(driver, element_id):
+    try:
+        element = driver.find_element(By.ID, element_id)
+        print(f"[DEBUG] Элемент с ID '{element_id}' найден. Текст: {element.text.strip()}")
+    except Exception as e:
+        print(f"[DEBUG] Элемент с ID '{element_id}' не найден. Ошибка: {e}")
+
+# Получение ввода от пользователя для выпадающих списков
+def get_user_input(driver, element_id, field_name, default="По умолчанию"):
+    try:
+        select = Select(WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, element_id))))
+        options = [opt.text for opt in select.options]
+        print(f"\n{field_name}:")
+        for idx, option in enumerate(options, start=1):
+            print(f"  {idx}. {option}")
+        print(f"  0. {default}")
+        choice = input(f"Выберите значение для '{field_name}' (по умолчанию: {default}): ").strip()
+        if choice.isdigit() and 0 <= int(choice) <= len(options):
+            choice = int(choice)
+            if choice == 0:
+                print(f"Значение для '{field_name}' оставлено по умолчанию.")
+            else:
+                select.select_by_index(choice - 1)
+                print(f"Выбрано значение '{options[choice - 1]}' для '{field_name}'.")
+        else:
+            print(f"Некорректный выбор. Оставлено значение по умолчанию.")
+    except Exception as e:
+        print(f"[ERROR] Ошибка при обработке '{field_name}': {e}")
+
+# Сбор данных с текущей страницы
+def parse_page(driver):
+    print("Сбор данных с текущей страницы...")
+    rows = driver.find_elements(By.CSS_SELECTOR, "tr.grid-row, tr.grid-alternating-row")
+    data = []
+    for row in rows:
+        cols = row.find_elements(By.TAG_NAME, "td")
+        if len(cols) >= 4:
+            try:
+                title = cols[0].text.strip()
+                description = cols[1].text.strip()
+                price = cols[2].text.strip()
+                link = cols[0].find_element(By.TAG_NAME, "a").get_attribute("href")
+                data.append([title, description, price, link])
+            except Exception as e:
+                print(f"[ERROR] Ошибка при обработке строки: {e}")
+    return data
+
+# Сохранение данных в CSV
+def save_to_csv(data, filename=OUTPUT_FILE):
+    with open(filename, mode="w", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
+        writer.writerow(["Заголовок", "Описание", "Цена", "Ссылка"])
+        writer.writerows(data)
+    print(f"Данные сохранены в файл '{filename}'.")
+
+# Основной процесс
+def main():
+    with webdriver.Firefox(options=options) as driver:
+        driver.get(BASE_URL)
+        print("[INFO] Открытие страницы...")
+        time.sleep(2)  # Ожидание загрузки
+
+        # Отладка: вывод текущего состояния страницы
+        print("[DEBUG] Проверка состояния элементов...")
+        debug_element_state(driver, "ctl00_cphBody_ucRegion_ddlBoundList")
+        debug_element_state(driver, "ctl00_cphBody_tbTradeSearch")
+
+        print("=== Настройка параметров ===")
+        get_user_input(driver, "ctl00_cphBody_ucRegion_ddlBoundList", "Регион")
+        get_user_input(driver, "ctl00_cphBody_ucTradeType_ddlBoundList", "Вид торгов")
+        
+        # Ключевые слова
+        keyword = input("Введите ключевые слова (по умолчанию: пусто): ").strip()
+        try:
+            keyword_field = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "ctl00_cphBody_tbTradeObject")))
+            keyword_field.send_keys(keyword)
+            print(f"Ключевые слова: '{keyword}'.")
+        except Exception as e:
+            print(f"[ERROR] Ошибка при вводе ключевых слов: {e}")
+
+        # Нажимаем кнопку "Поиск"
+        try:
+            search_button = driver.find_element(By.ID, "ctl00_cphBody_btnSearch")
+            search_button.click()
+            print("[INFO] Кнопка поиска нажата. Ожидание результатов...")
+            time.sleep(3)
+        except Exception as e:
+            print(f"[ERROR] Ошибка при нажатии кнопки поиска: {e}")
+
+        # Делаем скриншот после поиска
+        driver.save_screenshot("search_result.png")
+        print("Скриншот результатов поиска сохранён: 'search_result.png'.")
+
+        # Сбор данных с первой страницы
+        data = parse_page(driver)
+        if data:
+            save_to_csv(data)
+        else:
+            print("[INFO] На текущей странице нет данных.")
+
+if __name__ == "__main__":
+    main()
